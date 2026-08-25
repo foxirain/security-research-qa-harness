@@ -1,6 +1,7 @@
-# Evidence-Led QA Methodology
+# Validation Methodology
 
-The harness implements a narrow defensive question: **what is the highest impact statement that the current evidence can support?**
+The harness records which reported behavior reproduced, which controls changed
+the result, and which impact statements still require additional validation.
 
 ## 1. Normalize the claim
 
@@ -35,7 +36,7 @@ Boundary axes change one property at a time where possible: environment mode, va
 
 See the [expansion loop](methodology/expansion-loop.md) and [evidence ladders](methodology/evidence-ladders.md).
 
-## 5. Build an evidence ledger
+## 5. Classify result status
 
 Each severe chain step is marked:
 
@@ -46,20 +47,23 @@ Each severe chain step is marked:
 | `Unknown` | Current material does not establish or falsify the step |
 | `Disproven` | A required path, sink, trigger, or boundary did not hold in the relevant test |
 
-## 6. Set the severity ceiling
+## 6. Record impact limits
 
-State three things separately:
+The report keeps three fields separate:
 
-1. current ceiling;
-2. stronger plausible ceiling;
-3. exact blocking evidence.
+1. demonstrated impact;
+2. possible but unverified impact;
+3. the test or artifact still required.
 
 For example, arbitrary source injection into a generated file may establish build-integrity risk without establishing code execution. A sanitizer-confirmed invalid read may establish a memory-safety defect and availability risk without establishing an arbitrary read or control-flow primitive.
 
-## 7. Preserve negative findings
+## 7. Record negative results
 
-Important failed hypotheses belong in the report. They explain why a stronger claim was rejected and make the surviving claim more credible.
+Failed hypotheses and controls are retained when they affect interpretation of
+the reported issue.
 
-## 8. Require human closure
+## 8. Final review
 
-The harness classifies evidence and produces reports. A human still verifies authorization, target provenance, affected versions, environmental realism, remediation, coordinated disclosure, and publication safety.
+Before publication, the reviewer verifies authorization, target provenance,
+affected versions, environmental assumptions, remediation, disclosure status,
+and artifact safety.

@@ -4,160 +4,134 @@
 
 [![CI](https://github.com/foxirain/security-research-qa-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/foxirain/security-research-qa-harness/actions/workflows/ci.yml)
 
-<p align="center"><strong>Research Assurance Tool · Internal Lineage: April 2026 · Public Consolidation: 26 August 2026</strong></p>
+<p align="center"><strong>Research Tool · Internal Implementation: April 2026 · Public Consolidation: 26 August 2026</strong></p>
 
-<p align="center"><strong>Core Philosophy — Evidence Before Severity</strong><br>후보는 공격적으로 검증하되, 주장은 재현된 증거가 허용하는 경계까지만 올린다.</p>
-
-> **Project status.** 이 저장소는 취약점 탐색 결과와 외부 보고를 독립적으로 재현·반증·확장하기 위해 구축한 두 내부 QA prototype을 하나의 공개 포트폴리오로 정리한다. `poc_harness`의 실행 엔진과 `poc-harness`의 evidence-led validation 방법론을 결합했으며, 원본 저장소와 실제 비공개 QA session은 변경하거나 복사하지 않았다.
->
-> 이 하네스는 취약점을 자동으로 확정하거나 severity를 자동 산정하지 않는다. Case file은 명령을 포함하는 실행 명세이므로 사람이 검토한 뒤 격리된 환경에서만 실행해야 한다. 최종 reachability, exploitability, affected version, severity와 disclosure 판단은 사람의 책임이다.
+> **Project status.** 이 저장소는 취약점 보고서의 독립 재현과 영향 검증에 사용한 내부 QA 구현을 공개용으로 정리한 것이다. `poc_harness`의 Python 실행 코드와 `poc-harness`의 검증 절차 문서를 통합했다. 내부 실행 기록, 미공개 취약점 자료와 기존 두 저장소의 Git 이력은 포함하지 않는다.
 
 ## Abstract
 
-**Abstract—** LLM-assisted vulnerability discovery는 많은 후보를 빠르게 만들 수 있지만, 후보 순위·모델 confidence·단일 crash만으로 공개 가능한 보안 주장을 만들 수는 없다. `Security Research QA Harness`는 이 간극을 **evidence-led research assurance** 문제로 정의한다. Ranked Markdown 또는 명시적 TOML case를 입력으로 받아 주장, 공격자 시작점, entrypoint, attacker control, sink 또는 invariant break와 blocking evidence를 구조화한다. Target adapter와 declarative replay는 file parser, service, web/OpenAPI, gRPC, library, JNI, native harness와 CLI 환경을 공통 실행 계약으로 변환한다. Base replay 뒤에는 positive·negative·stability control 및 제한된 boundary variant를 수행하고, runtime output, crash signal, artifact와 step-output diff를 수집한다. 분석 결과는 `Confirmed`, `Supported`, `Unknown`, `Disproven` evidence ladder와 severity ceiling 방법론에 따라 기술 보고서와 executive summary로 분리된다. 명령 실행은 명시적 승인 없이는 시작되지 않고, 설정된 credential은 저장되는 명령과 text output에서 redaction된다. 이 구현은 exploit generator, autonomous validator 또는 vulnerability-detection precision/recall benchmark가 아니다.
+**Abstract—** 취약점 탐색 결과를 보고 가능한 finding으로 확정하려면 코드상의 의심 지점 외에도 실제 entrypoint, 입력 조건, 재현 결과, 대조군 및 영향 범위가 필요하다. `Security Research QA Harness`는 이 검증 과정을 TOML case로 기술하고 반복 실행하는 Python 도구다. Case는 대상 경로, 실행 단계, 환경 변수, 예상 종료 상태, 수집할 파일과 입력 변형 축을 정의한다. 실행기는 base case와 제한된 variant를 수행하고 stdout, stderr, 종료 코드, runtime signal과 지정된 artifact를 기록한다. 분석 단계는 ASan·UBSan·SIGSEGV 및 언어별 runtime output을 분류하고, variant 결과를 base case와 비교한다. 출력은 machine-readable JSON, 기술 보고서와 요약 보고서로 나뉜다. 명령 실행에는 별도의 승인 option이 필요하며 case에 설정된 인증값은 저장되는 text output에서 제거된다. 이 도구는 exploit 생성기나 취약점 자동 판정기가 아니며, 최종 영향과 공개 여부는 수집된 자료를 검토한 뒤 결정해야 한다.
 
-**Index Terms—** vulnerability research, quality assurance, evidence ledger, controlled replay, negative control, boundary exploration, severity ceiling, defensive security.
+**Index Terms—** vulnerability validation, reproduction harness, quality assurance, runtime evidence, negative control, boundary testing.
 
-## I. Portfolio Position
+## I. Introduction
 
-이 프로젝트는 기존 포트폴리오의 sandbox와 discovery 다음에 위치하는 **독립 QA·증거 검증 계층**이다.
+취약점 탐색 단계에서 얻은 결과에는 서로 다른 수준의 정보가 섞여 있다.
+
+- 코드에서 확인한 의심 경로
+- 실행하지 않은 영향 추정
+- 환경에 따라 달라지는 crash 또는 test failure
+- 실제로 재현된 보안 경계 위반
+
+이들을 구분하지 않으면 단일 crash가 과도한 영향으로 해석되거나, 반대로 재현된 문제가 환경 오류로 처리될 수 있다. 이 저장소는 다음 항목을 동일한 실행 기록 안에 남기는 것을 목적으로 한다.
+
+1. 보고된 동작을 실행하는 base case
+2. 의심 조건을 제거하거나 변경한 control
+3. 입력·환경·protocol 조건을 제한적으로 변경한 variant
+4. 각 실행의 종료 상태와 runtime output
+5. base case와 variant 사이의 artifact 차이
+6. 확인된 영향과 아직 확인하지 못한 영향
+
+## II. Portfolio Scope
+
+이 저장소는 containment와 vulnerability discovery 이후의 검증 단계에 해당한다.
 
 ```mermaid
 flowchart LR
-    subgraph C[Containment]
-      E[Agent Egress Lock]
-      A[Agent Security Company]
-    end
-    subgraph D[Discovery]
-      L1[Linux Harness v1]
-      L2[Linux Harness v2]
-      O2[OSS Harness v2]
-      O3[Adaptive OSS Harness]
-    end
-    subgraph Q[Assurance]
-      H[Security Research<br/>QA Harness]
-    end
-    subgraph O[Outcome]
-      P[Reviewed report<br/>and disclosure]
-    end
-    C --> D --> H --> P
+    C[Containment<br/>agent-*] --> D[Vulnerability discovery<br/>linux-* · codex-*]
+    D --> Q[Independent QA<br/>security-research-qa-harness]
+    Q --> R[Reviewed report<br/>remediation · disclosure]
 ```
 
-| Layer | Repository | Responsibility |
+**TABLE I — RELATED REPOSITORIES**
+
+| Stage | Repository | Scope |
 | --- | --- | --- |
-| Containment | [Agent Egress Lock](https://github.com/foxirain/agent-egress-lock) | 초기 Docker·proxy·host-firewall egress isolation |
-| Containment | [Agent Security Company](https://github.com/foxirain/agent-security-company) | Linux identity, filesystem, network policy와 independent QA execution boundary |
-| Discovery | [Linux Kernel Codex Harness](https://github.com/foxirain/linux-kernel-codex-harness) | Kernel review attention allocation |
-| Discovery | [Linux Kernel Codex Harness v2](https://github.com/foxirain/linux-kernel-codex-harness-v2) | Provenance-aware finding triage |
-| Discovery | [Codex OSS Vulnerability Harness v2](https://github.com/foxirain/codex-oss-vuln-harness-v2) | Multi-language External Signal workflow |
-| Discovery | [Adaptive Codex OSS Vulnerability Harness](https://github.com/foxirain/codex-adaptive-oss-vuln-harness) | State-isolated adaptive search diversity |
-| Assurance | **Security Research QA Harness** | Controlled reproduction, controls, evidence ledger와 claim ceiling |
+| Containment | [Agent Egress Lock](https://github.com/foxirain/agent-egress-lock) | Docker, proxy와 host firewall을 이용한 초기 egress 제한 |
+| Containment | [Agent Security Company](https://github.com/foxirain/agent-security-company) | Linux identity, filesystem, network policy와 분리된 QA 실행 계정 |
+| Discovery | [Linux Kernel Codex Harness](https://github.com/foxirain/linux-kernel-codex-harness) | Linux kernel 조사 대상 우선순위화 |
+| Discovery | [Linux Kernel Codex Harness v2](https://github.com/foxirain/linux-kernel-codex-harness-v2) | Repository provenance를 포함한 finding triage |
+| Discovery | [Codex OSS Vulnerability Harness v2](https://github.com/foxirain/codex-oss-vuln-harness-v2) | 여러 언어의 OSS 조사 대상 선정과 검토 orchestration |
+| Discovery | [Adaptive Codex OSS Vulnerability Harness](https://github.com/foxirain/codex-adaptive-oss-vuln-harness) | 분리된 여러 search session의 실행과 병합 |
+| Validation | **Security Research QA Harness** | Report intake, 재현, control, artifact 비교와 영향 기록 |
 
-Discovery repository는 “어디를 조사할 것인가”를 다룬다. 이 저장소는 “발견된 주장을 어디까지 믿을 수 있는가”를 다룬다. Agent Security Company의 QA identity·policy boundary와도 역할이 다르다. 전자는 **누가 어떤 권한으로 검증을 실행하는가**, 이 저장소는 **어떤 증거 계약으로 결과를 판정하는가**를 구현한다.
-
-## II. Evidence and Design Principles
-
-### A. Execution Is Not Proof
-
-명령이 종료됐다는 사실, nonzero exit, crash 문자열 또는 생성된 report는 각각 관찰값일 뿐이다. Report-grade claim에는 실제 entrypoint, attacker control, broken invariant 또는 sink, concrete consequence와 negative control이 필요하다.
-
-### B. Evidence Ladder
-
-| Grade | Meaning |
-| --- | --- |
-| `Confirmed` | Runtime 또는 artifact가 chain step을 직접 입증 |
-| `Supported` | 강하게 뒷받침하지만 결정적 artifact가 부족 |
-| `Unknown` | 현재 증거로 확인하거나 반증할 수 없음 |
-| `Disproven` | 필요한 path, trigger, sink 또는 boundary가 성립하지 않음 |
-
-### C. Severity Ceiling
-
-각 finding은 세 문장으로 제한한다.
-
-1. 현재 증거로 방어 가능한 최대 claim
-2. 더 강하지만 아직 증명되지 않은 claim
-3. 그 claim을 막는 정확한 evidence gap
-
-예를 들어 generated-source injection은 build-integrity risk를 입증할 수 있지만, trusted automatic build consumption과 execution trigger가 없으면 RCE를 입증하지 않는다. ASan invalid read는 memory-safety defect와 crash를 입증할 수 있지만 arbitrary read 또는 code execution을 자동으로 입증하지 않는다.
-
-### D. Controlled Expansion
-
-Base reproduction에서 멈추지 않되 blind fuzzing으로 확장하지 않는다. 한 번에 하나의 의미 있는 축을 변경해 scope, privilege, parser mode, input size, protocol method 또는 artifact behavior가 어떻게 바뀌는지 비교한다.
-
-### E. Negative Evidence Is First-Class
-
-실패한 가설과 stronger claim을 막은 control을 최종 보고서에 남긴다. 이는 결과를 약하게 만드는 것이 아니라 surviving claim의 정확한 경계를 만든다.
-
-### F. Safe-by-Default Execution
-
-- `validate`와 기본 `triage-oss`는 target command를 실행하지 않는다.
-- `run`은 `--acknowledge-execution-risk` 없이는 거부된다.
-- `triage-oss`가 생성한 case는 `--execute`를 명시해야 실행된다.
-- Configured bearer token, cookie와 header value는 저장되는 command/stdout/stderr와 `analysis.json`에서 redaction된다.
-- 이 장치는 sandbox가 아니다. 신뢰할 수 없는 target은 별도 disposable containment에서 실행해야 한다.
+`Agent Security Company`는 QA 작업의 identity와 실행 권한을 분리한다. 이 저장소는 그 환경 안에서 수행할 개별 검증 case와 결과 형식을 정의한다. 두 프로젝트는 각각 execution boundary와 validation procedure를 담당한다.
 
 ## III. System Architecture
 
 <p align="center">
-  <img src="docs/assets/qa-evidence-pipeline.svg" alt="Evidence-led security research QA pipeline" width="1100">
+  <img src="docs/assets/qa-evidence-pipeline.svg" alt="Security Research QA processing pipeline" width="1100">
 </p>
 
-<p align="center"><strong>Fig. 1.</strong> 후보는 replay와 control을 통해 evidence로 변환된다. 자동 분석은 severity ceiling을 보조하지만 최종 sign-off와 disclosure는 사람의 경계로 남는다.</p>
+<p align="center"><strong>Fig. 1.</strong> Report와 PoC를 실행 가능한 case로 정규화한 뒤 base replay, control과 variant 결과를 수집한다. 영향 평가는 이 실행 자료와 별도의 검토를 함께 사용한다.</p>
 
-**TABLE I — MAJOR MODULE RESPONSIBILITIES**
+**TABLE II — MODULE RESPONSIBILITIES**
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py`, `models.py` | TOML case parsing, typed execution·evidence contract와 redacted serialization |
-| `adapters.py` | File parser, service, web/OpenAPI, gRPC, library, JNI, native harness, CLI profile |
-| `replay.py`, `executor.py` | Declarative request command, timeout, text artifact capture와 credential redaction |
-| `orchestration.py` | Setup, service lifecycle, healthcheck와 cleanup |
-| `boundary.py`, `diffing.py` | 제한된 variant 생성과 base replay 대비 artifact·runtime·output diff |
-| `analyzer.py`, `memory_lens.py` | ASan·UBSan·SIGSEGV signal, memory region, access, allocator와 adjacency cue |
-| `collectors.py` | Go panic, JVM fatal log, Python traceback 등 language-aware runtime observation |
-| `intake.py`, `oss_workflow.py` | Ranked Markdown 정규화, repository profile, draft case와 optional execution |
-| `reporting.py` | `analysis.json`, analyst report와 executive summary |
+| `config.py`, `models.py` | TOML parsing과 report, target, replay, boundary, result data model |
+| `adapters.py` | File parser, service, OpenAPI, gRPC, library, JNI, native와 CLI preset |
+| `replay.py` | OpenAPI와 gRPC metadata에서 replay command 생성 |
+| `executor.py` | Command 실행, timeout, stdout/stderr 저장과 인증값 제거 |
+| `orchestration.py` | Target setup, service start/stop, health check와 cleanup |
+| `boundary.py` | 선언된 axis로 제한된 variant 생성 및 실행 |
+| `diffing.py` | Base case와 variant의 output, runtime observation과 artifact 비교 |
+| `analyzer.py`, `memory_lens.py` | Crash signal, access type, memory region, allocator state와 adjacency 분류 |
+| `collectors.py` | Go panic, JVM fatal log, Python traceback 등 runtime output 수집 |
+| `intake.py`, `oss_workflow.py` | Ranked Markdown 정규화, repository profile과 case draft 생성 |
+| `reporting.py` | JSON, technical Markdown와 executive summary 출력 |
 
-상세 설계는 [Architecture](docs/ARCHITECTURE.md), 전체 방법은 [Methodology](docs/METHODOLOGY.md)에서 설명한다.
+상세 구조는 [Architecture](docs/ARCHITECTURE.md)에 정리되어 있다.
 
-## IV. Methodology
+## IV. Case Definition
 
-### A. Intake and Attack Board
+Case는 다음 영역으로 구성된다.
 
-두 입력 형식을 지원한다.
-
-- 명시적 case: report metadata, target, adapter, replay, variable, boundary와 step을 정의한 TOML
-- Ranked report: `S/A/B/C/D` section을 가진 Markdown review summary
-
-Ranked report는 finding을 정규화하고 `S > A > B > C > D` 순서로 draft를 생성한다. Tier는 QA 예산 배분이며 vulnerability validity 또는 최종 severity가 아니다.
-
-### B. Target Adapters
-
-| Adapter | Preserved context |
+| Section | Content |
 | --- | --- |
-| `file-parser` | Input file, sanitizer, parser mode, crash artifact |
-| `service`, `web-app` | Startup, ports, healthcheck, request and service logs |
-| `openapi` | Method, path, query, headers, body and target URL |
-| `grpc` | Service/method, metadata, reflection/proto and request file |
-| `library`, `native-harness` | Minimal caller, argv/env, symbols and dump artifacts |
-| `jni-library` | Java exception state and native crash evidence |
-| `cli-tool` | Exact argv, cwd, input file and traceback |
+| `[report]` | 식별자, 보고된 내용, attack surface, exposure와 재현성 |
+| `[target]` | 대상 이름, root directory, setup과 cleanup command |
+| `[auth]` | 인증 방식, token, cookie와 header |
+| `[adapter]` | 제품 유형, 언어, runtime, service와 artifact 설정 |
+| `[replay]` | Custom command 또는 OpenAPI/gRPC replay metadata |
+| `[variables]` | Command와 replay에서 사용할 값 |
+| `[boundary]` | Variant 수와 조합 깊이 제한 |
+| `[[boundary.axes]]` | 변경할 변수, 파일, 환경 또는 protocol field |
+| `[[steps]]` | 실행 명령, working directory, timeout, 예상 종료 코드와 수집 경로 |
 
-Adapter 상세 필드는 [Adapter Guide](docs/ADAPTERS.md)에 있다.
+지원 adapter와 예제는 [Adapter Matrix](docs/ADAPTERS.md)에 있다.
 
-### C. Base Replay and Controls
+Case 파일은 실행할 명령을 포함하므로 코드와 같은 수준으로 검토해야 한다. `validate`는 형식과 adapter 적용만 확인하며 target command를 실행하지 않는다.
 
-Case는 expected exit code를 성공으로 간주할 수 있지만, `expected=true`는 보안 주장이 맞다는 뜻이 아니다. Base run과 control은 같은 observation path를 사용해야 한다.
+## V. Validation Procedure
 
-권장 control:
+### A. Base Replay
 
-- positive: 보고된 조건을 유지한 재현
-- negative: 의심한 조건만 제거
-- stability: 동일 의미를 유지하며 입력 크기 또는 실행 횟수 변화
+Base case는 보고자가 제시한 입력과 환경을 가능한 한 적은 단계로 재현한다. 다음 값이 실행 기록에 포함된다.
 
-### D. Boundary Axes
+- 실제 실행 명령과 working directory
+- environment override
+- timeout과 종료 코드
+- stdout과 stderr
+- 존재가 확인된 declared artifact
 
-지원되는 axis:
+`expected_exit_codes`는 harness 실행의 성공 여부를 구분하기 위한 값이다. 해당 종료 코드가 나왔다는 사실만으로 취약점이 확인되는 것은 아니다.
+
+### B. Controls
+
+동일한 관찰 경로에서 다음 case를 비교한다.
+
+| Control | Purpose |
+| --- | --- |
+| Positive | 보고된 조건에서 동일한 동작이 발생하는지 확인 |
+| Negative | 의심한 입력 또는 상태를 제거했을 때 동작이 사라지는지 확인 |
+| Stability | 반복 실행 또는 크기 변화에서 결과가 유지되는지 확인 |
+
+Control은 별도 step 또는 boundary axis로 표현할 수 있다.
+
+### C. Boundary Variants
+
+지원되는 axis는 다음과 같다.
 
 - `env-set`
 - `variable-set`
@@ -169,37 +143,41 @@ Case는 expected exit code를 성공으로 간주할 수 있지만, `expected=tr
 - `query-param`
 - `argv-append`
 
-`max_variants`와 `combine_depth`가 expansion budget을 제한한다.
+`max_variants`는 전체 실행 수를 제한하고 `combine_depth`는 두 axis의 조합 여부를 결정한다. 이 기능은 일반 fuzzing을 대신하지 않으며, base case와 가까운 조건 변화를 비교하기 위한 것이다.
 
-### E. Evidence Collection and Diff
+### D. Runtime Classification
 
-각 step은 exit code, duration, redacted stdout/stderr와 declared artifact existence를 기록한다. Variant는 base replay와 다음을 비교한다.
+현재 분석기는 다음 자료를 분류한다.
 
-- 새로 생기거나 사라진 artifact
-- 새로 생기거나 사라진 runtime observation
-- exit code 또는 stdout/stderr가 달라진 step
-- memory-risk classification 변화
+- AddressSanitizer memory error와 READ/WRITE access
+- UBSan runtime error
+- sanitizer classification이 없는 SIGSEGV
+- stack, heap, global memory region
+- freed allocation 및 object 좌우 adjacency
+- Go panic, JVM fatal error, Python traceback과 기타 언어별 runtime marker
 
-### F. Human Closure
+Memory classification은 후속 검토 대상을 정리하는 데 사용한다. 임의 읽기·쓰기나 code execution 가능성을 자동으로 판정하지 않는다.
 
-자동 결과 뒤에는 사람이 다음을 닫아야 한다.
+### E. Result Comparison
 
-1. target provenance와 affected version
-2. 실제 attacker reachability와 privileges
-3. positive·negative control의 해석
-4. 가장 강한 defensible impact
-5. remediation 확인
-6. coordinated disclosure와 publication safety
+Variant마다 base case와 다음 항목을 비교한다.
 
-## V. Installation and Usage
+- 새로 생성되거나 사라진 artifact
+- 추가되거나 사라진 runtime observation
+- stdout/stderr 또는 종료 코드가 달라진 step
+- crash 및 memory classification 변화
+
+보고서에는 확인된 결과와 더 강한 영향을 판단하기 위해 부족한 자료를 분리해 기록한다. 세부 기준은 [Methodology](docs/METHODOLOGY.md)와 bug class별 [Playbooks](docs/playbooks/)에 있다.
+
+## VI. Installation and Usage
 
 ### A. Requirements
 
 - Python 3.11 이상
-- 실제 target build/replay에 필요한 project-specific dependency
-- 신뢰할 수 없는 target을 위한 credential-free disposable lab
+- 대상 project의 build 및 실행 dependency
+- 신뢰할 수 없는 입력을 실행할 별도의 격리 환경
 
-Runtime Python dependency는 표준 라이브러리뿐이다.
+Python runtime dependency는 표준 라이브러리뿐이다.
 
 ### B. Installation
 
@@ -213,15 +191,13 @@ python -m pip install .
 security-qa-harness --help
 ```
 
-### C. Validate Without Execution
+### C. Case Validation
 
 ```bash
 security-qa-harness validate examples/report-case.toml
 ```
 
-### D. Run a Reviewed Case
-
-`run`은 TOML의 setup, start, replay, stop과 cleanup command를 실행한다. 먼저 case와 target을 검토하고 격리한 뒤 명시적으로 승인한다.
+### D. Case Execution
 
 ```bash
 security-qa-harness run examples/report-case.toml \
@@ -229,9 +205,9 @@ security-qa-harness run examples/report-case.toml \
   --acknowledge-execution-risk
 ```
 
-기본 예제는 synthetic ASan-style output만 생성하며 실제 취약점을 포함하지 않는다.
+`--acknowledge-execution-risk`는 case에 포함된 명령을 검토했다는 명시적 표시다. 별도의 sandbox를 생성하지는 않는다. 포함된 `report-case.toml`과 `demo_target.py`는 synthetic ASan output을 사용하는 기능 예제다.
 
-### E. Normalize a Ranked Report
+### E. Ranked Report Intake
 
 ```bash
 security-qa-harness intake examples/ranked-report.md \
@@ -240,9 +216,9 @@ security-qa-harness intake examples/ranked-report.md \
   --top-n 5
 ```
 
-### F. Draft OSS Cases First
+### F. OSS Case Draft
 
-기본 `triage-oss`는 repository를 profile하고 case TOML을 생성하지만 target command를 실행하지 않는다.
+기본 `triage-oss`는 repository profile과 case draft만 만들고 생성한 command를 실행하지 않는다.
 
 ```bash
 security-qa-harness triage-oss examples/ranked-report.md \
@@ -251,17 +227,9 @@ security-qa-harness triage-oss examples/ranked-report.md \
   --top-n 3
 ```
 
-생성된 command와 artifact path를 검토한 뒤 disposable lab에서만 실행한다.
+Draft를 검토한 뒤 같은 workflow에서 실행하려면 `--execute`를 추가한다.
 
-```bash
-security-qa-harness triage-oss examples/ranked-report.md \
-  --repo /path/to/authorized/repository \
-  --output-root /tmp/security-qa-oss \
-  --top-n 3 \
-  --execute
-```
-
-## VI. Output Contract
+## VII. Output
 
 ```text
 runs/<report-id>-<UTC-timestamp>/
@@ -275,54 +243,54 @@ runs/<report-id>-<UTC-timestamp>/
 └── executive_summary.md
 ```
 
-- `analysis.json`: 후처리 가능한 structured evidence
-- `analysis.md`: replay, crash/runtime signal, memory lens, boundary와 next action
-- `executive_summary.md`: confirmed impact, unproven claims와 immediate action
+| File | Content |
+| --- | --- |
+| `analysis.json` | Report, step, signal, variant와 impact data |
+| `analysis.md` | 실행 결과, runtime evidence, boundary comparison과 후속 확인 항목 |
+| `executive_summary.md` | 확인된 영향과 아직 확인되지 않은 영향의 짧은 요약 |
 
-Raw binary artifact는 자동 redaction되지 않는다. 공개 전 [Publication Safety](docs/PUBLICATION_SAFETY.md)를 따른다.
+설정된 bearer token, cookie와 header value는 저장되는 명령과 text output에서 `[REDACTED]`로 치환된다. 수집 대상에 포함된 임의의 binary 또는 외부 artifact는 자동으로 검사하지 않는다. 공개 전 [Publication Safety](docs/PUBLICATION_SAFETY.md)를 별도로 적용해야 한다.
 
-## VII. Verification and Lineage
+## VIII. Verification
 
-CI는 Python 3.11, 3.12, 3.13에서 unit test와 installed-wheel smoke test를 수행한다. 공개 전 로컬 audit에서 **30 / 30 regression test**와 wheel 설치 smoke test가 통과했다. Regression suite는 다음 software contract를 확인한다.
+2026년 8월 26일 공개 전 검증에서 다음 결과를 확인했다.
 
-- TOML parsing과 adapter default
-- OpenAPI/gRPC declarative command generation
-- ASan·UBSan·SIGSEGV classification과 memory-risk cue
-- boundary variant와 artifact diff
-- ranked-report normalization과 dry-run OSS drafting
-- explicit execution gate
-- credential redaction in logs and structured output
-- packaged CLI import와 help
+- regression test: **30 / 30 passed**
+- Python 3.12 local compile: passed
+- PEP 517 wheel build: passed
+- clean virtual environment install 및 CLI smoke test: passed
+- GitHub Actions Python 3.11, 3.12, 3.13: passed
 
-이 테스트는 vulnerability detection precision, recall, exploitability 또는 CVE discovery rate를 측정하지 않는다.
+Regression test는 case parsing, adapter, replay command, crash 분류, boundary variant, artifact diff, ranked intake, 실행 승인 조건과 인증값 제거를 검사한다. 취약점 탐지 정확도나 exploitability를 측정하는 test가 아니다.
 
-공개 repository는 두 내부 prototype의 current source를 선택적으로 통합한 새 lineage이며 원본 Git history를 병합하지 않는다. 자세한 범위는 [Project Lineage](docs/LINEAGE.md)를 참고한다.
+명령과 검증 범위는 [Validation Receipt](docs/VALIDATION.md)에 기록되어 있다.
 
-## VIII. Boundaries
+## IX. Limitations
 
-- 이 프로젝트는 autonomous vulnerability scanner가 아니다.
-- Ranked tier, model confidence, crash pattern과 priority는 vulnerability proof가 아니다.
-- Case file은 신뢰된 code처럼 review해야 한다. 명시적 실행 flag는 container나 sandbox를 제공하지 않는다.
-- Memory lens는 analyst cue이며 exploitability verdict가 아니다.
-- Auto-selected repository command는 heuristic이고 finding-specific reproduction이 아닐 수 있다.
-- Generated report는 affected version, operational exposure 또는 disclosure readiness를 자동 증명하지 않는다.
-- 공개 예제는 synthetic이며 실제 비공개 QA session이나 unpublished finding을 포함하지 않는다.
-- 이 exact public snapshot에 과거 CVE outcome을 사후 귀속하지 않는다.
+- Case file과 target command의 안전성을 자동 판정하지 않는다.
+- 실행 승인 option은 container, VM 또는 network isolation을 제공하지 않는다.
+- Auto-selected repository command는 finding 전용 reproducer가 아닐 수 있다.
+- Crash pattern 분류는 exploitability 분석을 대신하지 않는다.
+- 수집된 artifact의 내용과 disclosure 가능 여부를 자동 판정하지 않는다.
+- 공개 예제에는 실제 비공개 QA session이나 미공개 finding이 포함되어 있지 않다.
+- 과거 CVE가 이 공개 snapshot으로 검증됐다고 주장하지 않는다.
 
-## IX. Repository Map
+## X. Repository Map
 
 | Path | Purpose |
 | --- | --- |
-| `src/security_qa_harness/` | 실행 가능한 QA engine |
-| `examples/`, `fixtures/` | Synthetic case, ranked intake와 demo target |
-| `docs/methodology/` | Evidence ladder, expansion, intake, severity와 reporting rules |
-| `docs/playbooks/` | Memory safety, parser DoS와 code-generation injection playbook |
-| `docs/ARCHITECTURE.md` | Processing stage와 trust boundary |
-| `docs/VALIDATION.md` | 공개 전 test·build·safety validation receipt |
-| `docs/PUBLICATION_SAFETY.md` | 공개 전 redaction·disclosure checklist |
-| `tests/` | Regression and safety contract |
+| `src/security_qa_harness/` | Python package와 CLI |
+| `examples/`, `fixtures/` | Synthetic case, ranked report와 demo target |
+| `docs/ARCHITECTURE.md` | 실행 단계와 trust boundary |
+| `docs/METHODOLOGY.md` | Report intake, control과 영향 기록 절차 |
+| `docs/methodology/` | Evidence ladder, expansion, severity와 report 문서 |
+| `docs/playbooks/` | Memory safety, parser DoS와 code-generation injection 검토 항목 |
+| `docs/PUBLICATION_SAFETY.md` | 공개 전 artifact 확인 기준 |
+| `docs/VALIDATION.md` | Test, build와 설치 검증 기록 |
+| `tests/` | Regression suite |
+
+이 공개 저장소와 내부 prototype의 관계는 [Project Lineage](docs/LINEAGE.md)에 정리되어 있다.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). Security issues should follow
-the [Security Policy](SECURITY.md).
+Licensed under the [Apache License 2.0](LICENSE). Security issues should follow the [Security Policy](SECURITY.md).

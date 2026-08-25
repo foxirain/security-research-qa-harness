@@ -1,6 +1,8 @@
 # Architecture
 
-Security Research QA Harness separates report intake, controlled execution, evidence interpretation, and human sign-off. The separation matters because a command completing successfully is not vulnerability proof, and a crash is not automatically proof of exploitability.
+Security Research QA Harness separates report intake, controlled execution,
+result comparison, and final review. A completed command records process state;
+it does not by itself establish vulnerability impact or exploitability.
 
 ![Evidence-led QA pipeline](assets/qa-evidence-pipeline.svg)
 
@@ -12,8 +14,8 @@ Security Research QA Harness separates report intake, controlled execution, evid
 | Planning | Target profile, adapter, replay metadata | Explicit commands, variables, controls, collection paths | Generated commands require human review |
 | Execution | Reviewed case in an isolated target | Exit state, redacted stdout/stderr, selected artifacts | Commands run only after an explicit execution flag |
 | Boundary exploration | Base case and declarative axes | Controlled variants and artifact diffs | Variant count is bounded by the case definition |
-| Evidence analysis | Runtime output and collected artifacts | Crash signals, runtime observations, memory-risk lens | Pattern classification is evidence support, not exploitability proof |
-| Reporting | Structured analysis | Technical report and executive summary | Final severity and disclosure remain human decisions |
+| Result analysis | Runtime output and collected artifacts | Crash signals, runtime observations, memory-risk fields | Pattern classification does not establish exploitability |
+| Reporting | Structured analysis | Technical report and executive summary | Final severity and disclosure require separate review |
 
 ## Module map
 

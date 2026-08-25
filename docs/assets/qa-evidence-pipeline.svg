@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
-  <title id="title">Security Research QA evidence pipeline</title>
-  <desc id="desc">A report enters normalization, controlled replay, controls and boundary exploration, evidence analysis, severity ceiling, and human sign-off.</desc>
+  <title id="title">Vulnerability report validation pipeline</title>
+  <desc id="desc">A report enters normalization, replay, control execution, result comparison, impact review, and final review.</desc>
   <defs>
     <style>
       .title { font: 700 25px system-ui, sans-serif; fill: #0f172a; }
@@ -18,11 +18,11 @@
     </marker>
   </defs>
   <rect width="1200" height="520" fill="#ffffff"/>
-  <text x="60" y="58" class="title">Evidence-led vulnerability QA</text>
-  <text x="60" y="86" class="small">Execution produces observations. Only reviewed evidence supports a security claim.</text>
+  <text x="60" y="58" class="title">Vulnerability report validation</text>
+  <text x="60" y="86" class="small">Base replay and controls are recorded before impact is assessed.</text>
 
   <rect x="60" y="135" width="170" height="105" class="box input"/>
-  <text x="145" y="170" text-anchor="middle" class="label">Candidate</text>
+  <text x="145" y="170" text-anchor="middle" class="label">Input report</text>
   <text x="145" y="197" text-anchor="middle" class="small">report · patch · PoC</text>
   <text x="145" y="217" text-anchor="middle" class="small">sanitizer · review index</text>
 
@@ -42,7 +42,7 @@
   <text x="815" y="217" text-anchor="middle" class="small">stability · boundary</text>
 
   <rect x="960" y="135" width="180" height="105" class="box evidence"/>
-  <text x="1050" y="170" text-anchor="middle" class="label">Evidence</text>
+  <text x="1050" y="170" text-anchor="middle" class="label">Results</text>
   <text x="1050" y="197" text-anchor="middle" class="small">runtime · artifacts</text>
   <text x="1050" y="217" text-anchor="middle" class="small">diff · crash signal</text>
 
@@ -52,17 +52,17 @@
   <path d="M910 188 H960" class="arrow"/>
 
   <rect x="310" y="325" width="250" height="115" class="box evidence"/>
-  <text x="435" y="360" text-anchor="middle" class="label">Evidence ledger</text>
+  <text x="435" y="360" text-anchor="middle" class="label">Result record</text>
   <text x="435" y="387" text-anchor="middle" class="small">Confirmed · Supported</text>
   <text x="435" y="409" text-anchor="middle" class="small">Unknown · Disproven</text>
 
   <rect x="650" y="325" width="230" height="115" class="box"/>
-  <text x="765" y="360" text-anchor="middle" class="label">Severity ceiling</text>
+  <text x="765" y="360" text-anchor="middle" class="label">Impact review</text>
   <text x="765" y="387" text-anchor="middle" class="small">current claim</text>
   <text x="765" y="409" text-anchor="middle" class="small">stronger claim + blocker</text>
 
   <rect x="970" y="325" width="170" height="115" class="box human"/>
-  <text x="1055" y="360" text-anchor="middle" class="label">Human closure</text>
+  <text x="1055" y="360" text-anchor="middle" class="label">Final review</text>
   <text x="1055" y="387" text-anchor="middle" class="small">severity · remediation</text>
   <text x="1055" y="409" text-anchor="middle" class="small">disclosure · publish</text>
 
@@ -70,5 +70,5 @@
   <path d="M560 383 H650" class="arrow"/>
   <path d="M880 383 H970" class="arrow"/>
   <path d="M815 240 V285" class="dash"/>
-  <text x="60" y="490" class="small">Safe default: draft first, execute only after explicit approval, redact configured credentials, and keep final claims outside automation.</text>
+  <text x="60" y="490" class="small">Default behavior: draft before execution, require explicit execution approval, and redact configured credentials from text output.</text>
 </svg>
