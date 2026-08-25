@@ -1,0 +1,58 @@
+[report]
+id = "mail-YYYYMMDD-jni-001"
+title = "Example JNI boundary crash"
+reporter = "researcher@example.invalid"
+category = "memory-corruption"
+claim = "A crafted Java-side payload reaches native code and crashes inside JNI glue"
+attack_surface = "jni-entrypoint"
+exposure = "local"
+privileges_required = "none"
+user_interaction = "required"
+input_origin = "java-api-input"
+repeatability = "high"
+assets = ["payload", "hs_err", "core"]
+notes = "Template for Java to native bridge issues"
+
+[target]
+name = "jni-boundary"
+root = "/absolute/path/to/jni/project"
+adapter = "jni-library"
+setup = []
+cleanup = []
+
+[adapter]
+kind = "jni-library"
+product_type = "jni-library"
+language = "java"
+framework = "jni"
+sanitizer_profile = "jvm"
+extra_artifacts = ["logs/jni.log"]
+dump_globs = ["hs_err_pid*.log", "*.hprof", "core*"]
+notes = ["Preserve both JVM fatal logs and native dump artifacts for JNI issues."]
+
+[variables]
+PAYLOAD = "artifacts/payload.bin"
+HARNESS = "build/run-jni-harness.sh"
+
+[boundary]
+enabled = true
+max_variants = 4
+combine_depth = 1
+
+[[boundary.axes]]
+name = "payload-growth"
+kind = "file-append"
+target_file_variable = "PAYLOAD"
+content = "A"
+counts = [64, 256]
+description = "Check whether the JNI crash boundary widens with larger attacker-controlled payloads"
+
+[[steps]]
+name = "Replay JNI harness"
+objective = "Exercise the Java-to-native boundary through a deterministic harness"
+tags = ["replay", "jni"]
+command = "{HARNESS} {PAYLOAD}"
+cwd = "."
+timeout_seconds = 60
+expected_exit_codes = [0, 1, 134, 139]
+collect_paths = ["artifacts/payload.bin", "logs/jni.log"]

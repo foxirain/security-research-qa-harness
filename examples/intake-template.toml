@@ -1,0 +1,99 @@
+[report]
+id = "mail-YYYYMMDD-001"
+title = "Short issue title"
+reporter = "researcher@example.invalid"
+category = "memory-corruption"
+claim = "What the reporter says is exploitable or observable"
+attack_surface = "parser-or-endpoint"
+exposure = "unauthenticated-remote"
+privileges_required = "none"
+user_interaction = "none"
+input_origin = "network-packet"
+repeatability = "high"
+assets = ["poc-input", "trace", "video"]
+notes = "Paste sanitized intake context here"
+
+[target]
+name = "product-or-service"
+root = "/absolute/path/to/isolated/test/target"
+adapter = "service"
+setup = []
+cleanup = []
+
+[adapter]
+kind = "service"
+product_type = "service"
+language = "go"
+framework = "gin"
+sanitizer_profile = "go-race"
+build_commands = []
+runtime_env = {}
+extra_artifacts = []
+ports = [8080]
+healthcheck = "http://127.0.0.1:8080/healthz"
+notes = ["Document product-specific build, launch, auth, and log assumptions here."]
+
+[replay]
+mode = "none"
+
+[replay.openapi]
+spec = "openapi.yaml"
+path = "/api/v1/example"
+method = "POST"
+content_type = "application/json"
+body_variable = "POC_FILE"
+target_url_variable = "TARGET_URL"
+extra_headers_variable = "HTTP_EXTRA_HEADERS"
+query_variable = "HTTP_QUERY"
+
+[replay.grpc]
+target_variable = "GRPC_TARGET"
+service = "demo.Service"
+method = "Method"
+request_file_variable = "REQUEST_FILE"
+plaintext = true
+use_reflection = true
+extra_metadata_variable = "GRPC_METADATA"
+
+[variables]
+POC_FILE = "artifacts/poc.bin"
+TARGET_URL = "http://127.0.0.1:8080"
+HTTP_EXTRA_HEADERS = ""
+HTTP_QUERY = ""
+GRPC_TARGET = "127.0.0.1:50051"
+REQUEST_FILE = "artifacts/request.json"
+GRPC_METADATA = ""
+
+[boundary]
+enabled = true
+max_variants = 8
+combine_depth = 1
+
+[[boundary.axes]]
+name = "mode"
+kind = "env-set"
+env_key = "TARGET_MODE"
+values = ["default", "legacy"]
+step_name = "Replay reporter claim"
+description = "Test whether the claim survives configuration changes"
+
+[[boundary.axes]]
+name = "length-shift"
+kind = "file-append"
+target_file_variable = "POC_FILE"
+content = "A"
+counts = [32, 256, 2048]
+description = "Probe whether larger attacker-controlled inputs widen the corruption boundary"
+
+[[steps]]
+name = "Replay reporter claim"
+objective = "Validate the exact crash or behavioral corruption path from the inbound report"
+tags = ["replay", "primary"]
+command = "./target_binary {POC_FILE}"
+cwd = "."
+timeout_seconds = 60
+expected_exit_codes = [0, 1, 134, 139]
+collect_paths = ["artifacts/poc.bin", "logs/asan.log"]
+
+[steps.env]
+ASAN_OPTIONS = "halt_on_error=1:abort_on_error=1"

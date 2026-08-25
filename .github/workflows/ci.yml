@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Unit tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+      - name: Build and installed-wheel smoke test
+        run: |
+          python -m pip wheel . --no-deps -w "$RUNNER_TEMP/wheels"
+          python -m venv "$RUNNER_TEMP/security-qa-smoke"
+          "$RUNNER_TEMP/security-qa-smoke/bin/pip" install "$RUNNER_TEMP"/wheels/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/security-qa-smoke/bin/python" -c 'import security_qa_harness; print(security_qa_harness.__version__)'
+          "$RUNNER_TEMP/security-qa-smoke/bin/security-qa-harness" --help

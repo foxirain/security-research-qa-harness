@@ -1,0 +1,84 @@
+[report]
+id = "mail-YYYYMMDD-grpc-001"
+title = "Example gRPC service crash"
+reporter = "researcher@example.invalid"
+category = "panic-or-memory-corruption"
+claim = "Malformed protobuf request crashes the gRPC method"
+attack_surface = "grpc-method"
+exposure = "authenticated-remote"
+privileges_required = "valid-session"
+user_interaction = "none"
+input_origin = "grpc-request"
+repeatability = "high"
+assets = ["request-json", "panic-log"]
+notes = "Template for reflection-enabled gRPC services"
+
+[target]
+name = "grpc-service"
+root = "/absolute/path/to/service"
+adapter = "grpc"
+setup = []
+cleanup = []
+
+[auth]
+mode = "bearer"
+bearer_token = "REPLACE_ME"
+headers = { x-tenant = "research" }
+
+[adapter]
+kind = "grpc"
+product_type = "service"
+language = "go"
+framework = "grpc-go"
+sanitizer_profile = "go-race"
+start_commands = ["./grpc_service_binary"]
+ports = [50051]
+healthcheck = "http://127.0.0.1:8080/healthz"
+dump_globs = ["panic*.log", "core*"]
+
+[replay]
+mode = "grpc"
+
+[replay.grpc]
+target_variable = "GRPC_TARGET"
+service = "demo.UserService"
+method = "ParseProfile"
+request_file_variable = "REQUEST_FILE"
+plaintext = true
+use_reflection = true
+grpcurl_options = ["-emit-defaults"]
+extra_metadata_variable = "GRPC_METADATA"
+
+[variables]
+GRPC_TARGET = "127.0.0.1:50051"
+REQUEST_FILE = "artifacts/request.json"
+GRPC_METADATA = ""
+
+[boundary]
+enabled = true
+max_variants = 6
+combine_depth = 1
+
+[[boundary.axes]]
+name = "request-growth"
+kind = "file-append"
+target_file_variable = "REQUEST_FILE"
+content = "A"
+counts = [32, 512]
+description = "Grow a request field or trailing bytes to probe parser limits"
+
+[[boundary.axes]]
+name = "tenant-header"
+kind = "variable-set"
+variable = "GRPC_METADATA"
+values = ["-H 'x-parser-mode: legacy'", "-H 'x-parser-mode: compat'"]
+description = "Check whether parser mode metadata changes the crash profile"
+
+[[steps]]
+name = "Replay gRPC request"
+objective = "Replay the researcher request against the local gRPC service"
+tags = ["replay", "grpc"]
+cwd = "."
+timeout_seconds = 30
+expected_exit_codes = [0, 1, 2, 7]
+collect_paths = ["artifacts/request.json", "panic.log"]

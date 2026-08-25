@@ -1,0 +1,63 @@
+[report]
+id = "mail-20260409-001"
+title = "Example parser crash report"
+reporter = "security-researcher@example.invalid"
+category = "memory-corruption"
+claim = "Malformed input triggers a crash during recursive parse."
+attack_surface = "file-parser"
+exposure = "local"
+privileges_required = "none"
+user_interaction = "required"
+input_origin = "attacker-supplied-file"
+repeatability = "high"
+assets = ["example-input", "asan-log"]
+notes = "Use this as a template for incoming reports."
+
+[target]
+name = "local-target"
+root = ".."
+adapter = "file-parser"
+setup = []
+cleanup = []
+
+[adapter]
+kind = "file-parser"
+sanitizer_profile = "asan-ubsan"
+notes = ["Parser adapter applies sanitizer defaults and input-driven tagging."]
+
+[variables]
+POC_FILE = "fixtures/crash-input.txt"
+
+[boundary]
+enabled = true
+max_variants = 6
+combine_depth = 1
+
+[[boundary.axes]]
+name = "parser-mode"
+kind = "env-set"
+env_key = "PARSER_MODE"
+values = ["strict", "legacy"]
+step_name = "Replay reported reproduction"
+description = "Switch parser compatibility mode to see whether the bug survives configuration drift"
+
+[[boundary.axes]]
+name = "stack-shape"
+kind = "file-token-replace"
+target_file_variable = "POC_FILE"
+token = "CRASH"
+values = ["STACK", "UAF"]
+description = "Swap the trigger token to test alternate corruption classes on the same parser path"
+
+[[steps]]
+name = "Replay reported reproduction"
+objective = "Confirm the reporter's original crash path under a controlled environment"
+tags = ["replay", "primary"]
+command = "python3 fixtures/demo_target.py {POC_FILE}"
+cwd = "."
+timeout_seconds = 30
+expected_exit_codes = [0, 1]
+collect_paths = ["fixtures/crash-input.txt"]
+
+[steps.env]
+ASAN_OPTIONS = "halt_on_error=1:abort_on_error=1"

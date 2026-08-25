@@ -1,0 +1,57 @@
+[report]
+id = "mail-YYYYMMDD-cpp-lib-001"
+title = "Example C++ library parser corruption"
+reporter = "researcher@example.invalid"
+category = "memory-corruption"
+claim = "Crafted file triggers out-of-bounds write in library entrypoint"
+attack_surface = "library-api"
+exposure = "local"
+privileges_required = "none"
+user_interaction = "required"
+input_origin = "attacker-supplied-file"
+repeatability = "high"
+assets = ["poc-file", "asan-log"]
+notes = "Template for native library targets with a standalone replay harness"
+
+[target]
+name = "cpp-library"
+root = "/absolute/path/to/library"
+adapter = "library"
+setup = []
+cleanup = []
+
+[adapter]
+kind = "library"
+product_type = "library"
+language = "c++"
+framework = "none"
+sanitizer_profile = "asan-ubsan"
+extra_artifacts = ["build/asan.log"]
+notes = ["Prefer a small deterministic harness binary that calls the exact library entrypoint."]
+
+[variables]
+POC_FILE = "artifacts/input.bin"
+HARNESS = "build/replay_harness"
+
+[boundary]
+enabled = true
+max_variants = 6
+combine_depth = 1
+
+[[boundary.axes]]
+name = "input-size"
+kind = "file-append"
+target_file_variable = "POC_FILE"
+content = "A"
+counts = [64, 512]
+description = "Explore whether the overflow boundary widens with larger controlled input"
+
+[[steps]]
+name = "Replay library harness"
+objective = "Exercise the affected library function through a minimal replay harness"
+tags = ["replay", "library"]
+command = "{HARNESS} {POC_FILE}"
+cwd = "."
+timeout_seconds = 30
+expected_exit_codes = [0, 1, 134, 139]
+collect_paths = ["artifacts/input.bin", "build/asan.log"]

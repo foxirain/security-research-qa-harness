@@ -1,0 +1,56 @@
+[report]
+id = "mail-YYYYMMDD-py-cli-001"
+title = "Example Python CLI crash"
+reporter = "researcher@example.invalid"
+category = "logic-or-crash"
+claim = "Special option set triggers an unhandled exception"
+attack_surface = "cli-argv"
+exposure = "local"
+privileges_required = "none"
+user_interaction = "required"
+input_origin = "argv-and-file"
+repeatability = "high"
+assets = ["input-file", "traceback"]
+notes = "Template for Python CLI or script targets"
+
+[target]
+name = "python-cli"
+root = "/absolute/path/to/tool"
+adapter = "cli-tool"
+setup = []
+cleanup = []
+
+[adapter]
+kind = "cli-tool"
+product_type = "cli-tool"
+language = "python"
+framework = "argparse"
+sanitizer_profile = "none"
+extra_artifacts = []
+notes = ["Python CLI reports benefit from exact argv and cwd preservation."]
+
+[variables]
+INPUT_FILE = "artifacts/input.txt"
+EXTRA_ARGS = "--mode default"
+
+[boundary]
+enabled = true
+max_variants = 6
+combine_depth = 1
+
+[[boundary.axes]]
+name = "argv-mutate"
+kind = "argv-append"
+variable = "EXTRA_ARGS"
+values = ["--mode legacy", "--unsafe --verbose"]
+description = "Check whether alternate argv combinations widen the failure boundary"
+
+[[steps]]
+name = "Replay CLI"
+objective = "Replay the reporter invocation with the supplied input"
+tags = ["replay", "cli"]
+command = "python3 tool.py {EXTRA_ARGS} {INPUT_FILE}"
+cwd = "."
+timeout_seconds = 30
+expected_exit_codes = [0, 1]
+collect_paths = ["artifacts/input.txt"]

@@ -1,0 +1,106 @@
+[report]
+id = "mail-YYYYMMDD-web-go-001"
+title = "Example Go web service crash"
+reporter = "researcher@example.invalid"
+category = "panic-or-memory-corruption"
+claim = "Malformed request body crashes the service"
+attack_surface = "http-json-endpoint"
+exposure = "unauthenticated-remote"
+privileges_required = "none"
+user_interaction = "none"
+input_origin = "http-request"
+repeatability = "high"
+assets = ["request-body", "panic-log"]
+notes = "Template for Go/Gin style HTTP service targets"
+
+[target]
+name = "go-web-service"
+root = "/absolute/path/to/service"
+adapter = "openapi"
+setup = []
+cleanup = []
+
+[auth]
+mode = "bearer"
+bearer_token = "REPLACE_ME"
+headers = { X-Tenant = "research" }
+notes = ["Replace with a lab token that reaches the vulnerable route without production data."]
+
+[adapter]
+kind = "openapi"
+product_type = "openapi"
+language = "go"
+framework = "gin"
+sanitizer_profile = "go-race"
+start_commands = ["./service_binary"]
+stop_commands = []
+ports = [8080]
+healthcheck = "http://127.0.0.1:8080/healthz"
+startup_timeout_seconds = 20
+healthcheck_interval_seconds = 1.0
+extra_artifacts = ["logs/service.log"]
+dump_globs = ["panic*.log", "core*"]
+notes = ["Keep server start and stop commands deterministic in target.setup and target.cleanup."]
+
+[replay]
+mode = "openapi"
+
+[replay.openapi]
+spec = "openapi.yaml"
+path = "/api/v1/test"
+method = "POST"
+content_type = "application/json"
+body_variable = "BODY_FILE"
+target_url_variable = "TARGET_URL"
+extra_headers_variable = "HTTP_EXTRA_HEADERS"
+query_variable = "HTTP_QUERY"
+curl_options = ["--fail-with-body"]
+
+[variables]
+TARGET_URL = "http://127.0.0.1:8080"
+BODY_FILE = "artifacts/body.json"
+HTTP_METHOD = "POST"
+HTTP_EXTRA_HEADERS = ""
+HTTP_QUERY = ""
+
+[boundary]
+enabled = true
+max_variants = 8
+combine_depth = 1
+
+[[boundary.axes]]
+name = "body-growth"
+kind = "file-append"
+target_file_variable = "BODY_FILE"
+content = "A"
+counts = [128, 1024]
+description = "Grow the attacker-controlled body while preserving the same request path"
+
+[[boundary.axes]]
+name = "method-flip"
+kind = "http-method"
+values = ["PUT", "PATCH"]
+description = "Check whether alternate HTTP verbs hit the same vulnerable handler family"
+
+[[boundary.axes]]
+name = "header-flip"
+kind = "http-header"
+header_name = "X-Parser-Mode"
+values = ["legacy", "compat"]
+description = "Test whether parser behavior changes with compatibility headers"
+
+[[boundary.axes]]
+name = "query-debug"
+kind = "query-param"
+query_name = "debug"
+values = ["1", "true"]
+description = "Check whether query-driven alternate flows preserve the crash"
+
+[[steps]]
+name = "Replay HTTP body"
+objective = "Replay the reporter request against the local service"
+tags = ["replay", "http", "openapi"]
+cwd = "."
+timeout_seconds = 30
+expected_exit_codes = [0, 1, 7, 22]
+collect_paths = ["artifacts/body.json", "logs/service.log"]
