@@ -22,10 +22,48 @@ from security_qa_harness.models import (
     ReplayConfig,
     ReportMetadata,
 )
-from security_qa_harness.oss_workflow import triage_ranked_report_against_repo
+from security_qa_harness.oss_workflow import execute_generated_case, triage_ranked_report_against_repo
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def write_missing_command_case(path: Path) -> None:
+    path.write_text(
+        """[report]
+id = "missing-command"
+title = "Missing command"
+reporter = "test"
+category = "archive-path-traversal"
+claim = "Archive traversal"
+attack_surface = "archive-output"
+
+[target]
+name = "fixture"
+root = "."
+adapter = "generic"
+
+[adapter]
+kind = "generic"
+
+[boundary]
+enabled = true
+max_variants = 1
+
+[[boundary.axes]]
+name = "mode"
+kind = "env-set"
+env_key = "MODE"
+values = ["changed"]
+
+[[steps]]
+name = "missing tool"
+command = "security-qa-command-that-does-not-exist"
+cwd = "."
+expected_exit_codes = [0]
+""",
+        encoding="utf-8",
+    )
 
 
 class CliSafetyTests(unittest.TestCase):
@@ -82,9 +120,106 @@ class CliSafetyTests(unittest.TestCase):
             report.write_text("# Review\n\n## S Tier\n\n- Synthetic parser crash: controlled test claim.\n", encoding="utf-8")
             output = triage_ranked_report_against_repo(report, repo, temp / "out", top_n=1)
             payload = json.loads((output / "triage_summary.json").read_text(encoding="utf-8"))
+            draft = Path(payload["selected_findings"][0]["draft"]).read_text(encoding="utf-8")
         self.assertFalse(payload["execution_requested"])
         self.assertEqual(payload["selected_findings"][0]["run_status"], "not-executed")
         self.assertEqual(payload["executions"][0]["status"], "not-executed")
+        self.assertEqual(
+            payload["selected_findings"][0]["generated_input_provenance"],
+            "harness-generated-input-not-observed-evidence",
+        )
+        self.assertIn("expected_exit_codes = [0]", draft)
+        self.assertIn("collect_paths = []", draft)
+
+    def test_oss_triage_cli_returns_nonzero_for_operational_failure(self) -> None:
+        with TemporaryDirectory() as tmp, redirect_stdout(StringIO()):
+            temp = Path(tmp)
+            repo = temp / "repo"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text("[project]\nname='fixture'\nversion='0'\n", encoding="utf-8")
+            report = temp / "report.md"
+            report.write_text("# Review\n\n## S Tier\n\n- Synthetic parser crash: controlled test claim.\n", encoding="utf-8")
+            status = main(
+                [
+                    "triage-oss",
+                    str(report),
+                    "--repo",
+                    str(repo),
+                    "--output-root",
+                    str(temp / "out"),
+                    "--top-n",
+                    "1",
+                    "--execute",
+                ]
+            )
+            summary_path = next((temp / "out").glob("*/triage_summary.json"))
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        self.assertEqual(status, 3)
+        self.assertEqual(payload["executions"][0]["status"], "operational-failure")
+
+    def test_oss_triage_does_not_execute_an_empty_fallback_command(self) -> None:
+        with TemporaryDirectory() as tmp, redirect_stdout(StringIO()):
+            temp = Path(tmp)
+            repo = temp / "repo"
+            repo.mkdir()
+            report = temp / "report.md"
+            report.write_text("# Review\n\n## S Tier\n\n- Synthetic parser crash: controlled test claim.\n", encoding="utf-8")
+            status = main(
+                [
+                    "triage-oss",
+                    str(report),
+                    "--repo",
+                    str(repo),
+                    "--output-root",
+                    str(temp / "out"),
+                    "--top-n",
+                    "1",
+                    "--execute",
+                ]
+            )
+            summary_path = next((temp / "out").glob("*/triage_summary.json"))
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        self.assertEqual(status, 3)
+        self.assertEqual(payload["executions"][0]["status"], "operational-failure")
+        self.assertEqual(payload["executions"][0]["selected_command"], "")
+        self.assertNotIn("result_dir", payload["executions"][0])
+
+    def test_generated_case_reports_command_failure_without_running_variants(self) -> None:
+        with TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            case = temp / "case.toml"
+            write_missing_command_case(case)
+            result = execute_generated_case(case, temp / "runs")
+            output = Path(str(result["result_dir"]))
+            assessment = json.loads((output / "claim_assessment.json").read_text(encoding="utf-8"))
+            analysis = json.loads((output / "analysis.json").read_text(encoding="utf-8"))
+            boundary_exists = (output / "boundary").exists()
+        self.assertEqual(result["status"], "operational-failure")
+        self.assertEqual(assessment["verdict"], "operational-failure")
+        self.assertEqual(analysis["impact"]["verdict"], "operational-failure")
+        self.assertFalse(boundary_exists)
+
+    def test_standard_run_reports_command_failure_without_running_variants(self) -> None:
+        with TemporaryDirectory() as tmp, redirect_stdout(StringIO()):
+            temp = Path(tmp)
+            case = temp / "case.toml"
+            output_root = temp / "runs"
+            write_missing_command_case(case)
+            status = main(
+                [
+                    "run",
+                    str(case),
+                    "--output-root",
+                    str(output_root),
+                    "--acknowledge-execution-risk",
+                ]
+            )
+            output = next(output_root.iterdir())
+            analysis = json.loads((output / "analysis.json").read_text(encoding="utf-8"))
+            boundary_exists = (output / "boundary").exists()
+        self.assertEqual(status, 3)
+        self.assertEqual(analysis["impact"]["verdict"], "operational-failure")
+        self.assertFalse(boundary_exists)
 
 
 class StructuredRedactionTests(unittest.TestCase):

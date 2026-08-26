@@ -10,7 +10,13 @@ from security_qa_harness.config import load_case
 from security_qa_harness.diffing import diff_variant_against_base
 from security_qa_harness.intake import build_selected_findings, parse_findings
 from security_qa_harness.models import RuntimeObservation, StepResult
-from security_qa_harness.oss_workflow import discover_repo, infer_test_command
+from security_qa_harness.oss_workflow import (
+    assess_claim,
+    detect_operational_failures,
+    discover_repo,
+    infer_test_command,
+    rank_repo_paths,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +87,89 @@ class IntakeTests(unittest.TestCase):
         command, confidence = infer_test_command(ROOT, [], [])
         self.assertEqual(command, "")
         self.assertEqual(confidence, "none")
+
+    def test_repository_ranking_ignores_generated_and_dependency_trees(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "archive_parser.py").write_text("pass\n", encoding="utf-8")
+            for directory in ["runs", "oss-runs", "build", "node_modules", ".venv", "package.egg-info"]:
+                path = root / directory
+                path.mkdir()
+                (path / "archive_parser_test.py").write_text("pass\n", encoding="utf-8")
+            ranked = rank_repo_paths(root, ["archive", "parser"])
+        self.assertEqual(ranked, ["src/archive_parser.py"])
+
+    def test_repository_ranking_does_not_return_unrelated_source_files(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tests").mkdir()
+            (root / "tests" / "test_unrelated.py").write_text("pass\n", encoding="utf-8")
+            ranked = rank_repo_paths(root, ["archive", "traversal"])
+        self.assertEqual(ranked, [])
+
+
+class ClaimAssessmentTests(unittest.TestCase):
+    def test_claim_text_cannot_substantiate_itself(self) -> None:
+        assessment = assess_claim(
+            "Generated zip contains an archive traversal entry such as ../../etc/passwd",
+            "archive-path-traversal",
+            "not-reproduced",
+            "none-observed",
+            [],
+            [result("pytest", "")],
+        )
+        self.assertEqual(assessment["verdict"], "inconclusive")
+
+    def test_observed_traversal_entry_is_partial_evidence(self) -> None:
+        assessment = assess_claim(
+            "Archive output may contain unsafe paths",
+            "archive-path-traversal",
+            "not-reproduced",
+            "none-observed",
+            [],
+            [result("archive-list", "entry=../../etc/passwd")],
+        )
+        self.assertEqual(assessment["verdict"], "partially-substantiated")
+        self.assertEqual(assessment["observed_evidence_sources"], ["step:archive-list:stdout"])
+
+    def test_missing_test_runner_is_an_operational_failure(self) -> None:
+        failed = StepResult(
+            name="pytest",
+            objective="test",
+            tags=[],
+            command="python3 -m pytest",
+            cwd="/tmp",
+            exit_code=1,
+            expected=False,
+            duration_seconds=0.01,
+            stdout="",
+            stderr="/usr/bin/python3: No module named pytest\n",
+            collected_artifacts=[],
+        )
+        failures = detect_operational_failures([failed])
+        assessment = assess_claim(
+            "Archive traversal",
+            "archive-path-traversal",
+            "not-reproduced",
+            "none-observed",
+            [],
+            [failed],
+            failures,
+        )
+        self.assertEqual(failures, ["pytest: required test runner is unavailable"])
+        self.assertEqual(assessment["verdict"], "operational-failure")
+
+    def test_passing_test_name_is_not_stack_runtime_evidence(self) -> None:
+        assessment = assess_claim(
+            "Nested input exhausts the stack",
+            "stack-overflow",
+            "not-reproduced",
+            "none-observed",
+            [],
+            [result("pytest", "test_stack_overflow PASSED")],
+        )
+        self.assertEqual(assessment["verdict"], "not-substantiated")
 
 
 if __name__ == "__main__":

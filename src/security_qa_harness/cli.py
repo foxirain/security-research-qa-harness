@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 import sys
 
@@ -13,10 +14,13 @@ from .collectors import collect_runtime_observations
 from .config import load_case
 from .executor import auth_redaction_values, prepare_steps, run_steps
 from .intake import normalize_report
-from .models import AnalysisResult, ExecutiveSummary
+from .models import AnalysisResult, BoundaryExplorationSummary, ExecutiveSummary
 from .orchestration import managed_target
-from .oss_workflow import triage_ranked_report_against_repo
+from .oss_workflow import detect_operational_failures, operational_failure_impact, triage_ranked_report_against_repo
 from .reporting import write_outputs
+
+
+OPERATIONAL_FAILURE_EXIT = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,6 +84,15 @@ def main(argv: list[str] | None = None) -> int:
             args.top_n,
             execute=args.execute,
         )
+        summary = json.loads((output_dir / "triage_summary.json").read_text(encoding="utf-8"))
+        failed = [
+            item
+            for item in summary.get("executions", [])
+            if item.get("status") in {"failed", "operational-failure"}
+        ]
+        if failed:
+            print(f"OSS triage finished with {len(failed)} execution failure(s). Results written to {output_dir}.")
+            return OPERATIONAL_FAILURE_EXIT
         print(f"OSS triage complete. Results written to {output_dir}.")
         return 0
 
@@ -103,16 +116,48 @@ def main(argv: list[str] | None = None) -> int:
         results = run_steps(steps, output_dir, auth_redaction_values(case))
         crash_signals, memory_lens, impact = analyze(case.metadata, results)
         runtime_observations = collect_runtime_observations(case.adapter, results, case.target.root)
-        boundary = explore_boundaries(case, output_dir, results, runtime_observations)
-        executive = build_executive_summary(case, impact, memory_lens, runtime_observations, boundary)
+        operational_failures = detect_operational_failures(results)
+        if operational_failures:
+            impact = operational_failure_impact(operational_failures)
+        boundary = (
+            BoundaryExplorationSummary(
+                enabled=False,
+                attempted_variants=0,
+                interesting_variants=0,
+                highest_risk_variant=None,
+                findings=["Boundary exploration was skipped because the base command did not run successfully."],
+                variants=[],
+            )
+            if operational_failures
+            else explore_boundaries(case, output_dir, results, runtime_observations)
+        )
+        executive = build_executive_summary(
+            case,
+            impact,
+            memory_lens,
+            runtime_observations,
+            boundary,
+            operational_failures,
+        )
         analysis = AnalysisResult(case.metadata, case.auth, case.adapter, case.replay, results, crash_signals, runtime_observations, memory_lens, impact, boundary, executive, output_dir)
         write_outputs(analysis)
 
+    if operational_failures:
+        print(f"Run finished with an operational failure. Analysis written to {output_dir}.")
+        return OPERATIONAL_FAILURE_EXIT
     print(f"Run complete. Analysis written to {output_dir}.")
     return 0
 
 
-def build_executive_summary(case, impact, memory_lens, runtime_observations, boundary) -> ExecutiveSummary:
+def build_executive_summary(
+    case,
+    impact,
+    memory_lens,
+    runtime_observations,
+    boundary,
+    operational_failures: list[str] | None = None,
+) -> ExecutiveSummary:
+    operational_failures = operational_failures or []
     top_variant = next((item for item in boundary.variants if item.name == boundary.highest_risk_variant), None)
     highest_boundary = top_variant.memory_lens.corruption_class if top_variant else memory_lens.corruption_class
     review_status = "required" if impact.exploitability_review_needed or top_variant else "not yet justified by current evidence"
@@ -120,11 +165,18 @@ def build_executive_summary(case, impact, memory_lens, runtime_observations, bou
         f"Report `{case.metadata.report_id}` is `{impact.verdict}` with priority `{impact.priority}`. "
         f"The highest confirmed tested boundary is `{highest_boundary}` and manual exploitability review is `{review_status}`."
     )
-    confirmed = [
-        f"Runtime evidence confirms `{impact.verdict}` for the reported path.",
-        f"Confirmed risks: availability `{impact.availability_risk}`, integrity `{impact.integrity_risk}`, confidentiality `{impact.confidentiality_risk}`.",
-        f"Base memory context indicates `{memory_lens.likely_impacted_asset}` with `{memory_lens.control_data_proximity}`.",
-    ]
+    confirmed: list[str] = []
+    if operational_failures:
+        headline = f"Report `{case.metadata.report_id}` could not be assessed because the base command failed operationally."
+        confirmed.append("No vulnerability conclusion was produced from the failed execution.")
+    else:
+        confirmed.extend(
+            [
+                f"Recorded impact verdict: `{impact.verdict}`.",
+                f"Recorded risks: availability `{impact.availability_risk}`, integrity `{impact.integrity_risk}`, confidentiality `{impact.confidentiality_risk}`.",
+                f"Base memory context: `{memory_lens.likely_impacted_asset}` with `{memory_lens.control_data_proximity}`.",
+            ]
+        )
     if runtime_observations:
         confirmed.append("Additional runtime evidence collected: " + ", ".join(obs.kind for obs in runtime_observations[:3]) + ".")
     if case.auth.mode != "none":
@@ -141,6 +193,10 @@ def build_executive_summary(case, impact, memory_lens, runtime_observations, bou
         "Potential control-data adjacency is treated as an analyst cue, not proof of exploitability.",
     ]
     immediate = list(impact.next_actions[:3])
+    if operational_failures:
+        unproven.insert(0, "The reported behavior was not evaluated because the execution environment was incomplete.")
+        immediate = ["Fix the execution environment, then rerun the unchanged base case."]
+        immediate.extend(operational_failures)
     if top_variant:
         immediate.append(f"Review the artifacts from variant `{top_variant.name}` before final severity sign-off.")
     if case.adapter.healthcheck:
